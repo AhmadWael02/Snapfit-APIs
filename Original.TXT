@@ -1,0 +1,49 @@
+from database import Base
+from sqlalchemy import Column, Integer, String, TIMESTAMP, text, ForeignKey, JSON, Boolean
+from sqlalchemy.orm import relationship
+
+
+class User(Base):
+    __tablename__ = "user"
+    id = Column(Integer, primary_key=True, nullable=False, index=True)
+    email = Column(String, nullable=False, unique=True)
+    brand = Column(Boolean, nullable=False)
+    size = Column(Integer, nullable=True)
+    gender = Column(String, nullable=True)
+    created_at = Column(TIMESTAMP(timezone=True), nullable=False, server_default=text("now()"))
+    password = relationship("Password", uselist=False, back_populates="user")
+    wardrobe = relationship("inventory", uselist=False, back_populates="user")
+
+
+class Password(Base):
+    __tablename__ = "passwords"
+    user_id = Column(Integer, ForeignKey('user.id'), primary_key=True)
+    password = Column(String, nullable=False)
+    user = relationship("User", back_populates="password")
+
+
+class Wardrobe(Base):
+    __tablename__ = "inventory"
+    user_id = Column(Integer, ForeignKey('user.id'), primary_key=True)
+    number_of_clothes = Column(Integer, nullable=False)
+    clothes = Column(JSON, nullable=False)
+    user = relationship("User", back_populates="inventory")
+
+class Clothes(Base):
+    __tablename__ = "clothes"
+    id = Column(Integer, primary_key=True, nullable=False, index=True)
+    owner_id = Column(Integer, ForeignKey('user.id'), nullable=False)
+    gender = Column(String, nullable=False)
+    apparel_type = Column(String, nullable=False)
+    subtype = Column(String, nullable=False)
+    color = Column(String, nullable=False)
+    occasion = Column(String, nullable=False)
+    size = Column(String, nullable=False)
+    path = Column(String, nullable=False)
+    owner = relationship("User", back_populates="clothes")
+
+class Recommendation(Base):
+    __tablename__ = "recommendation"
+    user_id = Column(Integer, ForeignKey('user.id'), primary_key=True)
+    recommendation = Column(JSON, nullable=False)
+    user = relationship("User", back_populates="recommendation")

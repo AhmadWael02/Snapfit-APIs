@@ -1,0 +1,96 @@
+from database import Base
+from sqlalchemy import Column, Integer, String, TIMESTAMP, text, ForeignKey, JSON, Boolean
+from sqlalchemy.orm import relationship
+
+
+class Consumer(Base):
+    __tablename__ = "consumer"
+    id = Column(Integer, primary_key=True, nullable=False, index=True)
+    email = Column(String, nullable=False, unique=True)
+    username = Column(String, nullable=False, unique=True)
+    size = Column(Integer, nullable=True)
+    gender = Column(String, nullable=True)
+    created_at = Column(TIMESTAMP(timezone=True), nullable=False, server_default=text("now()"))
+    password = relationship("CPassword", uselist=False, back_populates="consumer")
+    wardrobe = relationship("Wardrobe", uselist=False, back_populates="consumer")
+    clothes = relationship("CClothes", back_populates="owner")
+    recommendation = relationship("Recommendation", uselist=False, back_populates="consumer")
+
+
+class CPassword(Base):
+    __tablename__ = "consumer_passwords"
+    consumer_id = Column(Integer, ForeignKey('consumer.id'), primary_key=True)
+    password = Column(String, nullable=False)
+    consumer = relationship("Consumer", back_populates="password")
+
+
+class Brand(Base):
+    __tablename__ = "brand"
+    id = Column(Integer, primary_key=True, nullable=False, index=True)
+    email = Column(String, nullable=False, unique=True)
+    brand_name = Column(String, nullable=False, unique=True)
+    description = Column(String, nullable=True)
+    created_at = Column(TIMESTAMP(timezone=True), nullable=False, server_default=text("now()"))
+    password = relationship("BPassword", uselist=False, back_populates="brand")
+    storage = relationship("Storage", uselist=False, back_populates="brand")
+    clothes = relationship("BClothes", back_populates="owner")
+
+
+class BPassword(Base):
+    __tablename__ = "brand_passwords"
+    brand_id = Column(Integer, ForeignKey('brand.id'), primary_key=True)
+    password = Column(String, nullable=False)
+    brand = relationship("Brand", back_populates="password")
+
+
+class Wardrobe(Base):
+    __tablename__ = "wardrobe"
+    consumer_id = Column(Integer, ForeignKey('consumer.id'), primary_key=True)
+    number_of_clothes = Column(Integer, nullable=False)
+    clothes = Column(JSON, nullable=False)
+    consumer = relationship("Consumer", back_populates="wardrobe")
+
+
+class Storage(Base):
+    __tablename__ = "storage"
+    brand_id = Column(Integer, ForeignKey('brand.id'), primary_key=True)
+    number_of_clothes = Column(Integer, nullable=False)
+    clothes = Column(JSON, nullable=False)
+    brand = relationship("Brand", back_populates="storage")
+
+
+class CClothes(Base):
+    __tablename__ = "consumer_clothes"
+    id = Column(Integer, primary_key=True, nullable=False, index=True)
+    owner_id = Column(Integer, ForeignKey('consumer.id'), nullable=False)
+    gender = Column(String, nullable=False)
+    apparel_type = Column(String, nullable=False)
+    subtype = Column(String, nullable=False)
+    color = Column(String, nullable=False)
+    occasion = Column(String, nullable=False)
+    size = Column(String, nullable=False)
+    path = Column(String, nullable=False)
+    owner = relationship("Consumer", back_populates="clothes")
+
+
+class BClothes(Base):
+    __tablename__ = "brand_clothes"
+    id = Column(Integer, primary_key=True, nullable=False, index=True)
+    owner_id = Column(Integer, ForeignKey('brand.id'), nullable=False)
+    gender = Column(String, nullable=False)
+    apparel_type = Column(String, nullable=False)
+    subtype = Column(String, nullable=False)
+    color = Column(String, nullable=False)
+    occasion = Column(String, nullable=False)
+    size = Column(String, nullable=False)
+    path = Column(String, nullable=False)
+    link = Column(String, nullable=False)
+    three_d = Column(String, nullable=True)
+    owner = relationship("Brand", back_populates="clothes")
+
+
+class Recommendation(Base):
+    __tablename__ = "recommendation"
+    consumer_id = Column(Integer, ForeignKey('consumer.id'), primary_key=True)
+    recommendation = Column(JSON, nullable=False)
+    consumer = relationship("Consumer", back_populates="recommendation")
