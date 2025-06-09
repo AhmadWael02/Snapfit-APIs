@@ -15,9 +15,9 @@ num_ftrs = model.fc.in_features
 model.fc = nn.Linear(num_ftrs, len(class_names))  # Replace with correct output size
 
 # Load your trained weights
-model.load_state_dict(torch.load("Bottomwear_Classifier.pth", map_location=device))
-model.eval()
-model.to(device)
+# model.load_state_dict(torch.load("Bottomwear_Classifier.pth", map_location=device))
+# model.eval()
+# model.to(device)
 
 # Define image transformations (match training)
 transform = transforms.Compose([

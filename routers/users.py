@@ -1,4 +1,4 @@
-from fastapi import HTTPException, status, Depends, APIRouter
+from fastapi import HTTPException, status, Depends, APIRouter, UploadFile, File
 from sqlalchemy.orm import Session
 import sqlalchemy  # For catching IntegrityError
 import schemas
@@ -7,6 +7,10 @@ import utils
 from database import get_db
 import oauth  # Assuming oauth.py and get_current_user are correctly defined
 import traceback  # For detailed error logging
+import shutil
+import os
+from pydantic import BaseModel
+from typing import List
 
 router = APIRouter(prefix="/users", tags=["users"])
 
@@ -138,7 +142,7 @@ def create_brand(user: schemas.BrandCreate, db: Session = Depends(get_db)):
                             detail="Something went wrong during brand creation.")
 
 
-@router.get("/{id}", response_model=schemas.UserInfo)  # Assuming UserInfo is defined in schemas
+@router.get("/{id:int}", response_model=schemas.UserInfo)  # id must be int to avoid clash with /me etc.
 def get_user(
         id: int,
         db: Session = Depends(get_db),
@@ -176,3 +180,83 @@ def get_user(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,  # Use descriptive constant
             detail="Something went wrong while retrieving the user."
         )
+
+@router.post("/profile-picture")
+def upload_profile_picture(file: UploadFile = File(...), db: Session = Depends(get_db), current_user: models.User = Depends(oauth.get_current_user)):
+    try:
+        # Save the file and get the relative path
+        relative_path = utils.save_upload_file(file, "images/profile_pics", f"user_{current_user.id}")
+        
+        # Update the user's profile picture path
+        current_user.profile_picture = relative_path
+        db.commit()
+        
+        # Return the relative path and full URL
+        return {
+            "profile_picture": relative_path,
+            "url": f"/static/{relative_path}"
+        }
+    except Exception as e:
+        traceback.print_exc()
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Upload failed")
+
+@router.get("/profile-picture")
+def get_profile_picture(db: Session = Depends(get_db), current_user: models.User = Depends(oauth.get_current_user)):
+    picture_path = getattr(current_user, "profile_picture", None)
+    if not picture_path:
+        return {"profile_picture": None, "url": None}
+    
+    return {
+        "profile_picture": picture_path,
+        "url": f"/static/{picture_path}"
+    }
+
+# ----------------------- Additional endpoints for mobile app -----------------------
+
+class PreferencesUpdate(BaseModel):
+    fit_preference: str
+    lifestyle_preferences: List[str]
+    season_preference: str
+    age_group: str
+    preferred_colors: List[str]
+    excluded_categories: List[str]
+
+class InfoUpdate(BaseModel):
+    name: str
+    phone: str
+
+class PasswordUpdate(BaseModel):
+    current_password: str
+    new_password: str
+
+class FeedbackPayload(BaseModel):
+    feedback: str
+
+@router.get("/me", response_model=schemas.UserInfo)
+def get_me(current_user: models.User = Depends(oauth.get_current_user)):
+    return current_user
+
+# @router.put("/preferences")
+# def update_preferences(payload: PreferencesUpdate, db: Session = Depends(get_db), current_user: models.User = Depends(oauth.get_current_user)):
+#     # For demo we simply acknowledge; extend schema as needed.
+#     return {"message": "Preferences saved"}
+
+@router.put("/info")
+def update_info(payload: InfoUpdate, db: Session = Depends(get_db), current_user: models.User = Depends(oauth.get_current_user)):
+    current_user.user_name = payload.name
+    current_user.phone = payload.phone
+    db.commit()
+    return {"message": "Info updated"}
+
+@router.put("/password")
+def change_password(payload: PasswordUpdate, db: Session = Depends(get_db), current_user: models.User = Depends(oauth.get_current_user)):
+    if not utils.verify(payload.current_password, current_user.password):
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Wrong current password")
+    current_user.password = utils.hash(payload.new_password)
+    db.commit()
+    return {"message": "Password updated"}
+
+@router.post("/feedback")
+def submit_feedback(payload: FeedbackPayload, current_user: models.User = Depends(oauth.get_current_user)):
+    print(f"Feedback from {current_user.id}: {payload.feedback}")
+    return {"message": "Thank you for your feedback"}
