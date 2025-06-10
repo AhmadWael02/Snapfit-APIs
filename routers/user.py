@@ -62,6 +62,9 @@ async def get_user_favorites(
         item = favorite.item
         item_dict = None
         if item:
+            # Fetch the user_name of the owner
+            owner = db.query(User).filter(User.id == item.owner_id).first()
+            user_name = owner.user_name if owner else None
             item_dict = {
                 "id": item.id,
                 "owner_id": item.owner_id,
@@ -74,6 +77,7 @@ async def get_user_favorites(
                 "path": item.path,
                 "purchase_link": item.purchase_link,
                 "price": item.price,
+                "user_name": user_name,  # Add the poster's name
             }
         favorite_dict = {
             "id": favorite.id,

@@ -8,7 +8,7 @@ from database import get_db
 
 router = APIRouter(prefix="/shop", tags=["shop"])
 
-def _serialize(item: models.Clothes, brand_name: str):
+def _serialize(item: models.Clothes, user_name: str):
     return {
         "id": item.id,
         "owner_id": item.owner_id,
@@ -21,7 +21,7 @@ def _serialize(item: models.Clothes, brand_name: str):
         "path": item.path,
         "purchase_link": item.purchase_link,
         "price": item.price,
-        "brand": brand_name,
+        "user_name": user_name,
     }
 
 @router.get("/items")
