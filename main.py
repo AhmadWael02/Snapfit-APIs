@@ -30,6 +30,9 @@ from routers.ai import router as ai_router
 from routers.outfits import router as outfits_router
 from routers.user import router as user_router
 from config import settings
+from datetime import datetime
+from typing import Optional
+
 models.Base.metadata.create_all(bind=engine)
 
 app = FastAPI()
@@ -66,9 +69,17 @@ app.include_router(user_router)
 
 # Load data with adjusted paths
 with open('../snapfit_v1/assets/models/fashion_embeddings/documents.json', 'r', encoding='utf-8') as f:
-    documents = json.load(f)
-embeddings = np.load('../snapfit_v1/assets/models/fashion_embeddings/embeddings.npy')
+    fashion_documents = json.load(f)
+fashion_embeddings = np.load('../snapfit_v1/assets/models/fashion_embeddings/embeddings.npy')
+
+with open('../snapfit_v1/assets/models/chat_embeddings/documents.json', 'r', encoding='utf-8') as f:
+    chat_documents = json.load(f)
+chat_embeddings = np.load('../snapfit_v1/assets/models/chat_embeddings/embeddings.npy')
+
 model = SentenceTransformer('all-MiniLM-L6-v2')
+
+# Chat memory buffer
+chat_memory = {}
 
 HF_API_KEY = settings.hf_api_key
 HF_MODEL = 'HuggingFaceH4/zephyr-7b-beta'
@@ -101,29 +112,61 @@ def hf_chat(prompt, model=HF_MODEL):
 
 class ChatRequest(BaseModel):
     query: str
+    user_id: Optional[str] = None
 
 @app.post("/chat")
 async def chat(request: ChatRequest):
     user_query = request.query
+    user_id = request.user_id or "default"
+    
+    # Initialize or get user's chat memory
+    if user_id not in chat_memory:
+        chat_memory[user_id] = []
+    
+    # Get relevant fashion context
     query_emb = model.encode([user_query])
-    sims = cosine_similarity(query_emb, embeddings)[0]
-    top_idx = np.argsort(sims)[::-1][:3]  # Top 3
-    context = '\n'.join([documents[i]['page_content'] for i in top_idx])
+    fashion_sims = cosine_similarity(query_emb, fashion_embeddings)[0]
+    fashion_top_idx = np.argsort(fashion_sims)[::-1][:3]
+    fashion_context = '\n'.join([fashion_documents[i]['page_content'] for i in fashion_top_idx])
+    
+    # Get relevant chat context
+    chat_sims = cosine_similarity(query_emb, chat_embeddings)[0]
+    chat_top_idx = np.argsort(chat_sims)[::-1][:2]
+    chat_context = '\n'.join([chat_documents[i]['page_content'] for i in chat_top_idx])
+    
+    # Combine contexts and chat history
+    chat_history = '\n'.join([f"User: {msg['user']}\nAssistant: {msg['assistant']}" for msg in chat_memory[user_id][-3:]])
+    
     prompt = (
         "You are a helpful AI fashion stylist. "
-        "Given the context below, answer the user's question as briefly and directly as possible. "
+        "Given the following contexts and chat history, answer the user's question as briefly and directly as possible. "
         "Do NOT repeat the context, instructions, or question. Only output the answer.\n\n"
-        f"Context:\n{context}\n\n"
+        f"Fashion Context:\n{fashion_context}\n\n"
+        f"Chat Context:\n{chat_context}\n\n"
+        f"Recent Chat History:\n{chat_history}\n\n"
         f"Question: {user_query}\n"
         "Answer:"
     )
+    
     answer = hf_chat(prompt)
-    # Remove everything before and including 'Answer:'
+    
+    # Clean up the answer
     if "Answer:" in answer:
         answer = answer.split("Answer:", 1)[1].strip()
-    # Remove any repeated context, prompt lines, or markdown headers
     lines = [line.strip() for line in answer.splitlines() if line.strip() and not line.strip().lower().startswith("context:") and not line.strip().startswith("#")]
     answer = lines[0] if lines else ""
+    
+    # Update chat memory
+    chat_memory[user_id].append({
+        "user": user_query,
+        "assistant": answer,
+        "timestamp": datetime.now().isoformat()
+    })
+    
+    # Keep only last 10 messages in memory
+    if len(chat_memory[user_id]) > 10:
+        chat_memory[user_id] = chat_memory[user_id][-10:]
+    
     return {"answer": answer}
 
 @app.get("/")
