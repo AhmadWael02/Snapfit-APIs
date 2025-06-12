@@ -63,6 +63,9 @@ class UserInfo(BaseModel):
     phone: Optional[str] = None
     size: Optional[str] = None
 
+    class Config:
+        from_attributes = True
+
 
 class ClassifierResponse(BaseModel):
     subtype: str
@@ -153,6 +156,19 @@ class UserFavoritesResponse(BaseModel):
 
     class Config:
         from_attributes = True  # Updated from orm_mode=True for Pydantic v2
+
+class ItemEventCreate(BaseModel):
+    item_id: int
+    user_id: int
+    event_type: str  # 'item_click', 'visit_store', 'recommendation'
+
+class ItemEventStats(BaseModel):
+    item_id: int
+    item_name: str
+    item_photo_url: str
+    users_clicked: int
+    visit_store: int
+    recommended: int
 
 app = FastAPI()
 

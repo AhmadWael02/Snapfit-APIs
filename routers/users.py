@@ -232,9 +232,15 @@ class PasswordUpdate(BaseModel):
 class FeedbackPayload(BaseModel):
     feedback: str
 
-@router.get("/me", response_model=schemas.UserInfo)
-def get_me(current_user: models.User = Depends(oauth.get_current_user)):
-    return current_user
+@router.get("/me")
+def get_me(current_user: models.User = Depends(oauth.get_current_user), db: Session = Depends(get_db)):
+    print('current_user.id:', current_user.id)
+    brand_row = db.query(models.Brand).filter(models.Brand.brand_id == current_user.id).first()
+    print('brand_row:', brand_row)
+    is_brand = brand_row is not None
+    user_info = schemas.UserInfo.from_orm(current_user).dict()
+    user_info['brand'] = is_brand
+    return user_info
 
 # @router.put("/preferences")
 # def update_preferences(payload: PreferencesUpdate, db: Session = Depends(get_db), current_user: models.User = Depends(oauth.get_current_user)):

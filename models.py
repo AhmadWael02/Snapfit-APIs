@@ -122,3 +122,12 @@ class Outfit(Base):
     top = relationship("Clothes", foreign_keys=[top_id], back_populates="outfits_as_top")
     bottom = relationship("Clothes", foreign_keys=[bottom_id], back_populates="outfits_as_bottom")
     shoes = relationship("Clothes", foreign_keys=[shoes_id], back_populates="outfits_as_shoes")
+
+
+class ItemEvent(Base):
+    __tablename__ = "item_events"
+    id = Column(Integer, primary_key=True, index=True)
+    item_id = Column(Integer, ForeignKey("clothes.id", ondelete="CASCADE"))
+    user_id = Column(Integer, ForeignKey("user.id", ondelete="CASCADE"))
+    event_type = Column(String(32), nullable=False)  # 'item_click', 'visit_store', 'recommendation'
+    created_at = Column(TIMESTAMP(timezone=True), nullable=False, server_default=text("now()"))
