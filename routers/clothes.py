@@ -2,6 +2,13 @@ from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File,
 from sqlalchemy.orm import Session
 from typing import List
 import shutil, os, traceback
+import subprocess
+from datetime import datetime
+import requests
+import sys
+from rembg import remove
+from PIL import Image
+import io
 
 import models, schemas
 from database import get_db
@@ -27,6 +34,20 @@ def get_user_clothes(db: Session = Depends(get_db), current_user: models.User = 
         traceback.print_exc()
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Unable to fetch clothes")
 
+PARSING_REPO = os.path.abspath("Self-Correction-Human-Parsing")
+MODEL_PATH = os.path.join(PARSING_REPO, "models", "exp-schp-201908301523-atr.pth")
+MODEL_URL = "https://github.com/PeikeLi/Self-Correction-Human-Parsing/releases/download/model/exp-schp-201908301523-atr.pth"
+
+# Ensure the repo and model are present
+if not os.path.exists(PARSING_REPO):
+    subprocess.run(["git", "clone", "https://github.com/PeikeLi/Self-Correction-Human-Parsing", PARSING_REPO], check=True)
+if not os.path.exists(MODEL_PATH):
+    os.makedirs(os.path.dirname(MODEL_PATH), exist_ok=True)
+    r = requests.get(MODEL_URL, stream=True)
+    with open(MODEL_PATH, 'wb') as f:
+        for chunk in r.iter_content(chunk_size=8192):
+            f.write(chunk)
+
 @router.post("/", response_model=schemas.Clothes, status_code=status.HTTP_201_CREATED)
 async def create_clothes(
     apparel_type: str = Form(...),
@@ -43,6 +64,20 @@ async def create_clothes(
     try:
         # Save the image and get the relative path
         relative_path = save_upload_file(image, "images/clothes", f"user_{current_user.id}")
+        abs_image_path = os.path.abspath(os.path.join("static", relative_path))
+        image_id = os.path.splitext(os.path.basename(abs_image_path))[0]
+        # --- Background Removal with rembg ---
+        static_masked_dir = os.path.join("static", "images", "clothes", "masked")
+        os.makedirs(static_masked_dir, exist_ok=True)
+        masked_filename = f"masked_{image_id}.png"
+        static_masked_path = os.path.join(static_masked_dir, masked_filename)
+        with open(abs_image_path, "rb") as inp_file:
+            input_data = inp_file.read()
+        output_data = remove(input_data)
+        with open(static_masked_path, "wb") as out_file:
+            out_file.write(output_data)
+        masked_relative_path = os.path.relpath(static_masked_path, "static")
+        # Save the item with the masked image path
         new_item = models.Clothes(
             owner_id=current_user.id,
             apparel_type=apparel_type,
@@ -51,7 +86,7 @@ async def create_clothes(
             size=size,
             occasion=occasion,
             gender=gender,
-            path=relative_path,
+            path=masked_relative_path,
             purchase_link=None,
             price=None
         )
