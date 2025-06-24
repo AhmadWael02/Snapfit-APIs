@@ -34,20 +34,6 @@ def get_user_clothes(db: Session = Depends(get_db), current_user: models.User = 
         traceback.print_exc()
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Unable to fetch clothes")
 
-PARSING_REPO = os.path.abspath("Self-Correction-Human-Parsing")
-MODEL_PATH = os.path.join(PARSING_REPO, "models", "exp-schp-201908301523-atr.pth")
-MODEL_URL = "https://github.com/PeikeLi/Self-Correction-Human-Parsing/releases/download/model/exp-schp-201908301523-atr.pth"
-
-# Ensure the repo and model are present
-if not os.path.exists(PARSING_REPO):
-    subprocess.run(["git", "clone", "https://github.com/PeikeLi/Self-Correction-Human-Parsing", PARSING_REPO], check=True)
-if not os.path.exists(MODEL_PATH):
-    os.makedirs(os.path.dirname(MODEL_PATH), exist_ok=True)
-    r = requests.get(MODEL_URL, stream=True)
-    with open(MODEL_PATH, 'wb') as f:
-        for chunk in r.iter_content(chunk_size=8192):
-            f.write(chunk)
-
 @router.post("/", response_model=schemas.Clothes, status_code=status.HTTP_201_CREATED)
 async def create_clothes(
     apparel_type: str = Form(...),
