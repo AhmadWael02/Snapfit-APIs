@@ -139,17 +139,39 @@ def test_add_item(db: Session = Depends(get_db), current_user: models.User = Dep
 # ---- Upload (image only) ----
 
 @router.post("/upload", status_code=status.HTTP_201_CREATED)
-async def upload_clothes_image(file: UploadFile = File(...), db: Session = Depends(get_db), current_user: models.User = Depends(oauth.get_current_user)):
+async def upload_clothes_image(image: UploadFile = File(...), db: Session = Depends(get_db), current_user: models.User = Depends(oauth.get_current_user)):
     try:
         # Save the file and get the relative path
-        relative_path = save_upload_file(file, "images/clothes", f"user_{current_user.id}")
+        relative_path = save_upload_file(image, "images/clothes", f"user_{current_user.id}")
+        abs_image_path = os.path.abspath(os.path.join("static", relative_path))
+        image_id = os.path.splitext(os.path.basename(abs_image_path))[0]
         
-        # Create a new clothes record
+        # --- Background Removal with rembg ---
+        static_masked_dir = os.path.join("static", "images", "clothes", "masked")
+        os.makedirs(static_masked_dir, exist_ok=True)
+        masked_filename = f"masked_{image_id}.png"
+        static_masked_path = os.path.join(static_masked_dir, masked_filename)
+        
+        with open(abs_image_path, "rb") as inp_file:
+            input_data = inp_file.read()
+        output_data = remove(input_data)
+        with open(static_masked_path, "wb") as out_file:
+            out_file.write(output_data)
+        
+        masked_relative_path = os.path.relpath(static_masked_path, "static")
+        
+        # Create a new clothes record with the masked image path
         new_item = models.Clothes(
             owner_id=current_user.id,
-            path=relative_path,  # Store the relative path in the database
+            path=masked_relative_path,  # Store the masked image path in the database
             apparel_type="Unknown",
             subtype="Unknown",
+            gender="Unisex",  # Default value for required field
+            color="Unknown",  # Default value for required field
+            occasion="Unknown",  # Default value for required field
+            size="Unknown",  # Default value for required field
+            purchase_link=None,
+            price=None
         )
         db.add(new_item)
         db.commit()
@@ -158,8 +180,8 @@ async def upload_clothes_image(file: UploadFile = File(...), db: Session = Depen
         # Return the ID and full URL path for the frontend
         return {
             "id": new_item.id, 
-            "path": relative_path,
-            "url": f"/static/{relative_path}"
+            "path": masked_relative_path,
+            "url": f"/static/{masked_relative_path}"
         }
     except Exception as e:
         traceback.print_exc()

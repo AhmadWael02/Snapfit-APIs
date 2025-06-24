@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, UploadFile, File
+from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Query
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 import random
@@ -110,20 +110,47 @@ def classify_image(file: UploadFile = File(...)):
     # Model temporarily unavailable. Always return a default response.
     return {"class": "Unknown"}
 
+def load_masked_image_from_db(item_id: int, db: Session, current_user: db_models.User):
+    """Load masked image from database for a specific clothes item"""
+    clothes_item = db.query(db_models.Clothes).filter(
+        db_models.Clothes.id == item_id,
+        db_models.Clothes.owner_id == current_user.id
+    ).first()
+    
+    if not clothes_item:
+        raise HTTPException(status_code=404, detail="Clothes item not found")
+    
+    # Construct the full path to the masked image
+    masked_image_path = os.path.join("static", clothes_item.path)
+    
+    if not os.path.exists(masked_image_path):
+        raise HTTPException(status_code=404, detail="Masked image not found")
+    
+    # Load and return the masked image
+    img = Image.open(masked_image_path).convert('RGB')
+    return img
+
 @router.post("/classify-topwear")
-async def classify_topwear(file: UploadFile = File(...)):
+async def classify_topwear(
+    item_id: int = Query(..., description="ID of the clothes item to classify"),
+    db: Session = Depends(get_db),
+    current_user: db_models.User = Depends(oauth.get_current_user)
+):
     try:
-        image_bytes = await file.read()
-        img = Image.open(io.BytesIO(image_bytes)).convert('RGB')
+        # Load the masked image from database
+        img = load_masked_image_from_db(item_id, db, current_user)
         img_tensor = topwear_preprocess(img).unsqueeze(0)
+        
         with torch.no_grad():
             output = topwear_model(img_tensor)
             probabilities = torch.nn.functional.softmax(output[0], dim=0)
             topwear_prediction = topwear_class_names[torch.argmax(probabilities).item()]
+        
         with torch.no_grad():
             occasion_output = occasion_model(img_tensor)
             occasion_probabilities = torch.nn.functional.softmax(occasion_output[0], dim=0)
             occasion_prediction = occasion_class_names[torch.argmax(occasion_probabilities).item()]
+        
         return {
             "topwear": topwear_prediction,
             "occasion": occasion_prediction
@@ -132,19 +159,26 @@ async def classify_topwear(file: UploadFile = File(...)):
         raise HTTPException(status_code=500, detail=str(e))
 
 @router.post("/classify-bottomwear")
-async def classify_bottomwear(file: UploadFile = File(...)):
+async def classify_bottomwear(
+    item_id: int = Query(..., description="ID of the clothes item to classify"),
+    db: Session = Depends(get_db),
+    current_user: db_models.User = Depends(oauth.get_current_user)
+):
     try:
-        image_bytes = await file.read()
-        img = Image.open(io.BytesIO(image_bytes)).convert('RGB')
+        # Load the masked image from database
+        img = load_masked_image_from_db(item_id, db, current_user)
         img_tensor = bottomwear_preprocess(img).unsqueeze(0)
+        
         with torch.no_grad():
             output = bottomwear_model(img_tensor)
             probabilities = torch.nn.functional.softmax(output[0], dim=0)
             bottomwear_prediction = bottomwear_class_names[torch.argmax(probabilities).item()]
+        
         with torch.no_grad():
             occasion_output = occasion_model(img_tensor)
             occasion_probabilities = torch.nn.functional.softmax(occasion_output[0], dim=0)
             occasion_prediction = occasion_class_names[torch.argmax(occasion_probabilities).item()]
+        
         return {
             "bottomwear": bottomwear_prediction,
             "occasion": occasion_prediction
@@ -153,19 +187,26 @@ async def classify_bottomwear(file: UploadFile = File(...)):
         raise HTTPException(status_code=500, detail=str(e))
 
 @router.post("/classify-shoes")
-async def classify_shoes(file: UploadFile = File(...)):
+async def classify_shoes(
+    item_id: int = Query(..., description="ID of the clothes item to classify"),
+    db: Session = Depends(get_db),
+    current_user: db_models.User = Depends(oauth.get_current_user)
+):
     try:
-        image_bytes = await file.read()
-        img = Image.open(io.BytesIO(image_bytes)).convert('RGB')
+        # Load the masked image from database
+        img = load_masked_image_from_db(item_id, db, current_user)
         img_tensor = shoes_preprocess(img).unsqueeze(0)
+        
         with torch.no_grad():
             outputs = shoes_model(img_tensor)
             probabilities = torch.nn.functional.softmax(outputs[0], dim=0)
             shoes_prediction = shoes_class_names[torch.argmax(probabilities).item()]
+        
         with torch.no_grad():
             occasion_output = occasion_model(img_tensor)
             occasion_probabilities = torch.nn.functional.softmax(occasion_output[0], dim=0)
             occasion_prediction = occasion_class_names[torch.argmax(occasion_probabilities).item()]
+        
         return {
             "shoes": shoes_prediction,
             "occasion": occasion_prediction
