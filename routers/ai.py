@@ -12,23 +12,30 @@ import os
 import models as db_models
 import oauth
 from database import get_db
+from torchvision import models as tv_models
 
 router = APIRouter(prefix="/ai", tags=["ai"])
 
-# Load model once at startup
-# MODEL_PATH = r'D:\snapfit_v1\snapfit_v1\assets\models\subCategory_99%_resnet101.pth'
-# model.load_state_dict(torch.load(MODEL_PATH, map_location='cpu'))
-# model.eval()
-# class_names = ['Bottomwear', 'Dress', 'Shoes', 'Topwear']
-# preprocess = transforms.Compose([
-#     transforms.Resize(256),
-#     transforms.CenterCrop(224),
-#     transforms.ToTensor(),
-#     transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])
-# ])
+# Subcategory classification model setup
+SUBCATEGORY_MODEL_PATH = r'../snapfit_v1/assets/models/subCategory_classification.pth'
+subcategory_model = tv_models.resnet101(weights=None)
+num_ftrs = subcategory_model.fc.in_features
+subcategory_model.fc = nn.Sequential(
+    nn.Dropout(p=0.4),
+    nn.Linear(num_ftrs, 3)
+)
+subcategory_model.load_state_dict(torch.load(SUBCATEGORY_MODEL_PATH, map_location='cpu'))
+subcategory_model.eval()
+subcategory_class_names = ['Bottomwear', 'Shoes', 'Topwear']
+subcategory_preprocess = transforms.Compose([
+    transforms.Resize(256),
+    transforms.CenterCrop(224),
+    transforms.ToTensor(),
+    transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])
+])
 
 # Topwear model setup
-TOPWEAR_MODEL_PATH = r'D:\snapfit_v1\snapfit_v1\assets\models\Topwear_93.3%_resnet101.pth'
+TOPWEAR_MODEL_PATH = r'../snapfit_v1/assets/models/Topwear_93.3%_resnet101.pth'
 topwear_model = models.resnet101(weights=None)
 num_ftrs = topwear_model.fc.in_features
 topwear_model.fc = nn.Sequential(
@@ -46,7 +53,7 @@ topwear_preprocess = transforms.Compose([
 ])
 
 # Bottomwear model setup
-BOTTOMWEAR_MODEL_PATH = r'D:\snapfit_v1\snapfit_v1\assets\models\Bottomwear_94.8%_resnet101.pth'
+BOTTOMWEAR_MODEL_PATH = r'../snapfit_v1/assets/models/Bottomwear_94.8%_resnet101.pth'
 bottomwear_model = models.resnet101(weights=None)
 num_ftrs = bottomwear_model.fc.in_features
 bottomwear_model.fc = nn.Linear(num_ftrs, 5)
@@ -61,7 +68,7 @@ bottomwear_preprocess = transforms.Compose([
 ])
 
 # Shoes model setup
-SHOES_MODEL_PATH = r'D:\snapfit_v1\snapfit_v1\assets\models\Shoes_91%_resnet50.pth'
+SHOES_MODEL_PATH = r'../snapfit_v1/assets/models/Shoes_91%_resnet50.pth'
 shoes_model = models.resnet152(weights=None)
 num_ftrs = shoes_model.fc.in_features
 shoes_model.fc = nn.Sequential(
@@ -79,7 +86,7 @@ shoes_preprocess = transforms.Compose([
 ])
 
 # Occasion model setup
-OCCASION_MODEL_PATH = r'D:\snapfit_v1\snapfit_v1\assets\models\usage2.pth'
+OCCASION_MODEL_PATH = r'../snapfit_v1/assets/models/usage2.pth'
 occasion_model = models.resnet152(weights=None)
 num_ftrs = occasion_model.fc.in_features
 occasion_model.classifier = nn.Sequential(
@@ -110,25 +117,54 @@ def classify_image(file: UploadFile = File(...)):
     # Model temporarily unavailable. Always return a default response.
     return {"class": "Unknown"}
 
-def load_masked_image_from_db(item_id: int, db: Session, current_user: db_models.User):
-    """Load masked image from database for a specific clothes item"""
-    clothes_item = db.query(db_models.Clothes).filter(
-        db_models.Clothes.id == item_id,
+def load_masked_image_from_db(item_id: int, db: Session, current_user: db_models.User) -> Image.Image:
+    """Load the masked image from database for a specific item."""
+    item = db.query(db_models.Clothes).filter(
+        db_models.Clothes.id == item_id, 
         db_models.Clothes.owner_id == current_user.id
     ).first()
     
-    if not clothes_item:
-        raise HTTPException(status_code=404, detail="Clothes item not found")
+    if not item or not item.path:
+        raise HTTPException(status_code=404, detail="Item not found or no image path")
     
     # Construct the full path to the masked image
-    masked_image_path = os.path.join("static", clothes_item.path)
+    image_path = os.path.join("static", item.path)
     
-    if not os.path.exists(masked_image_path):
-        raise HTTPException(status_code=404, detail="Masked image not found")
+    if not os.path.exists(image_path):
+        raise HTTPException(status_code=404, detail="Image file not found")
     
-    # Load and return the masked image
-    img = Image.open(masked_image_path).convert('RGB')
-    return img
+    return Image.open(image_path).convert('RGB')
+
+@router.post("/classify-subcategory")
+async def classify_subcategory(
+    item_id: int = Query(..., description="ID of the clothes item to classify"),
+    db: Session = Depends(get_db),
+    current_user: db_models.User = Depends(oauth.get_current_user)
+):
+    try:
+        # Load the masked image from database
+        img = load_masked_image_from_db(item_id, db, current_user)
+        img_tensor = subcategory_preprocess(img).unsqueeze(0)
+        
+        with torch.no_grad():
+            output = subcategory_model(img_tensor)
+            probabilities = torch.nn.functional.softmax(output[0], dim=0)
+            subcategory_prediction = subcategory_class_names[torch.argmax(probabilities).item()]
+            
+            # Map subcategory prediction to category
+            category_mapping = {
+                'Topwear': 'Upper Body',
+                'Bottomwear': 'Lower Body', 
+                'Shoes': 'Shoes'
+            }
+            category = category_mapping.get(subcategory_prediction, 'Unknown')
+        
+        return {
+            "subcategory": subcategory_prediction,
+            "category": category
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 @router.post("/classify-topwear")
 async def classify_topwear(

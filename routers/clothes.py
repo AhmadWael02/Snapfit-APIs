@@ -5,12 +5,14 @@ import shutil, os, traceback
 import subprocess
 from datetime import datetime
 import requests
-import sys
 from rembg import remove
 from PIL import Image
 import io
-
-import models, schemas
+import torch
+import torch.nn as nn
+from torchvision import models as tv_models, transforms
+import models as db_models  # database models
+import schemas
 from database import get_db
 import oauth
 from utils import save_upload_file
@@ -19,16 +21,16 @@ router = APIRouter(prefix="/clothes", tags=["clothes"])
 
 # ---- Helper ----
 
-def _serialize_clothes(item: models.Clothes) -> schemas.Clothes:
+def _serialize_clothes(item: db_models.Clothes) -> schemas.Clothes:
     """Return a Pydantic schema instance for a single Clothes row."""
     return schemas.Clothes.from_orm(item)
 
 # ---- CRUD ----
 
 @router.get("/user", response_model=List[schemas.Clothes])
-def get_user_clothes(db: Session = Depends(get_db), current_user: models.User = Depends(oauth.get_current_user)):
+def get_user_clothes(db: Session = Depends(get_db), current_user: db_models.User = Depends(oauth.get_current_user)):
     try:
-        clothes = db.query(models.Clothes).filter(models.Clothes.owner_id == current_user.id).all()
+        clothes = db.query(db_models.Clothes).filter(db_models.Clothes.owner_id == current_user.id).all()
         return clothes
     except Exception as e:
         traceback.print_exc()
@@ -45,7 +47,7 @@ async def create_clothes(
     gender: str = Form("Unisex"),
     image: UploadFile = File(...),
     db: Session = Depends(get_db),
-    current_user: models.User = Depends(oauth.get_current_user)
+    current_user: db_models.User = Depends(oauth.get_current_user)
 ):
     try:
         # Save the image and get the relative path
@@ -64,7 +66,7 @@ async def create_clothes(
             out_file.write(output_data)
         masked_relative_path = os.path.relpath(static_masked_path, "static")
         # Save the item with the masked image path
-        new_item = models.Clothes(
+        new_item = db_models.Clothes(
             owner_id=current_user.id,
             apparel_type=apparel_type,
             subtype=subtype,
@@ -85,8 +87,8 @@ async def create_clothes(
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Unable to create clothes item")
 
 @router.put("/{item_id}", response_model=schemas.Clothes)
-def update_clothes(item_id: int, updated: schemas.Clothes, db: Session = Depends(get_db), current_user: models.User = Depends(oauth.get_current_user)):
-    item_query = db.query(models.Clothes).filter(models.Clothes.id == item_id, models.Clothes.owner_id == current_user.id)
+def update_clothes(item_id: int, updated: schemas.Clothes, db: Session = Depends(get_db), current_user: db_models.User = Depends(oauth.get_current_user)):
+    item_query = db.query(db_models.Clothes).filter(db_models.Clothes.id == item_id, db_models.Clothes.owner_id == current_user.id)
     item = item_query.first()
     if not item:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Item not found")
@@ -96,16 +98,16 @@ def update_clothes(item_id: int, updated: schemas.Clothes, db: Session = Depends
     return item
 
 @router.delete("/{item_id}", status_code=status.HTTP_204_NO_CONTENT)
-def delete_clothes(item_id: int, db: Session = Depends(get_db), current_user: models.User = Depends(oauth.get_current_user)):
-    deleted = db.query(models.Clothes).filter(models.Clothes.id == item_id, models.Clothes.owner_id == current_user.id).delete(synchronize_session=False)
+def delete_clothes(item_id: int, db: Session = Depends(get_db), current_user: db_models.User = Depends(oauth.get_current_user)):
+    deleted = db.query(db_models.Clothes).filter(db_models.Clothes.id == item_id, db_models.Clothes.owner_id == current_user.id).delete(synchronize_session=False)
     db.commit()
     if not deleted:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Item not found")
     return
 
 @router.post("/test-add-item", response_model=schemas.Clothes)
-def test_add_item(db: Session = Depends(get_db), current_user: models.User = Depends(oauth.get_current_user)):
-    item = models.Clothes(
+def test_add_item(db: Session = Depends(get_db), current_user: db_models.User = Depends(oauth.get_current_user)):
+    item = db_models.Clothes(
         owner_id=current_user.id,
         gender="Unisex",
         apparel_type="Jacket",
@@ -125,7 +127,7 @@ def test_add_item(db: Session = Depends(get_db), current_user: models.User = Dep
 # ---- Upload (image only) ----
 
 @router.post("/upload", status_code=status.HTTP_201_CREATED)
-async def upload_clothes_image(image: UploadFile = File(...), db: Session = Depends(get_db), current_user: models.User = Depends(oauth.get_current_user)):
+async def upload_clothes_image(image: UploadFile = File(...), db: Session = Depends(get_db), current_user: db_models.User = Depends(oauth.get_current_user)):
     try:
         # Save the file and get the relative path
         relative_path = save_upload_file(image, "images/clothes", f"user_{current_user.id}")
@@ -147,7 +149,7 @@ async def upload_clothes_image(image: UploadFile = File(...), db: Session = Depe
         masked_relative_path = os.path.relpath(static_masked_path, "static")
         
         # Create a new clothes record with the masked image path
-        new_item = models.Clothes(
+        new_item = db_models.Clothes(
             owner_id=current_user.id,
             path=masked_relative_path,  # Store the masked image path in the database
             apparel_type="Unknown",
@@ -163,11 +165,66 @@ async def upload_clothes_image(image: UploadFile = File(...), db: Session = Depe
         db.commit()
         db.refresh(new_item)
         
-        # Return the ID and full URL path for the frontend
+        # --- Automatic Subcategory Classification ---
+        try:
+            # Import torch and torchvision for model loading
+            import torch
+            import torch.nn as nn
+            from torchvision import models, transforms
+            from PIL import Image
+            
+            # Subcategory classification model setup
+            SUBCATEGORY_MODEL_PATH = r'../snapfit_v1/assets/models/subCategory_classification.pth'
+            subcategory_model = tv_models.resnet101(weights=None)
+            num_ftrs = subcategory_model.fc.in_features
+            subcategory_model.fc = nn.Sequential(
+                nn.Dropout(p=0.4),
+                nn.Linear(num_ftrs, 3)
+            )
+            subcategory_model.load_state_dict(torch.load(SUBCATEGORY_MODEL_PATH, map_location='cpu'))
+            subcategory_model.eval()
+            subcategory_class_names = ['Bottomwear', 'Shoes', 'Topwear']
+            subcategory_preprocess = transforms.Compose([
+                transforms.Resize(256),
+                transforms.CenterCrop(224),
+                transforms.ToTensor(),
+                transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])
+            ])
+            
+            # Load the masked image and classify
+            img = Image.open(static_masked_path).convert('RGB')
+            img_tensor = subcategory_preprocess(img).unsqueeze(0)
+            
+            with torch.no_grad():
+                output = subcategory_model(img_tensor)
+                probabilities = torch.nn.functional.softmax(output[0], dim=0)
+                subcategory_prediction = subcategory_class_names[torch.argmax(probabilities).item()]
+                
+                # Map subcategory prediction to category
+                category_mapping = {
+                    'Topwear': 'Upper Body',
+                    'Bottomwear': 'Lower Body', 
+                    'Shoes': 'Shoes'
+                }
+                category = category_mapping.get(subcategory_prediction, 'Unknown')
+            
+            classification_result = {
+                "subcategory": subcategory_prediction,
+                "category": category
+            }
+        except Exception as e:
+            print(f"Classification failed: {e}")
+            classification_result = {
+                "subcategory": "Unknown",
+                "category": "Unknown"
+            }
+        
+        # Return the ID, full URL path, and classification results for the frontend
         return {
             "id": new_item.id, 
             "path": masked_relative_path,
-            "url": f"/static/{masked_relative_path}"
+            "url": f"/static/{masked_relative_path}",
+            "classification": classification_result
         }
     except Exception as e:
         traceback.print_exc()
