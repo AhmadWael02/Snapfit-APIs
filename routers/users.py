@@ -265,4 +265,17 @@ def change_password(payload: PasswordUpdate, db: Session = Depends(get_db), curr
 @router.post("/feedback")
 def submit_feedback(payload: FeedbackPayload, current_user: models.User = Depends(oauth.get_current_user)):
     print(f"Feedback from {current_user.id}: {payload.feedback}")
-    return {"message": "Thank you for your feedback"}
+    
+    # Send feedback email
+    email_sent = utils.send_feedback_email(
+        feedback=payload.feedback,
+        user_email=current_user.email,
+        user_name=current_user.user_name
+    )
+    
+    if email_sent:
+        return {"message": "Thank you for your feedback! We've received your message."}
+    else:
+        # Still return success to user, but log the email failure
+        print("Warning: Feedback received but email notification failed to send")
+        return {"message": "Thank you for your feedback!"}
