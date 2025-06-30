@@ -39,7 +39,7 @@ def save_upload_file(upload_file: UploadFile, folder: str, prefix: str = "") -> 
         shutil.copyfileobj(upload_file.file, buffer)
     
     # Return the relative path for database storage
-    return os.path.join(folder, filename)
+    return os.path.join(folder, filename).replace("\\", "/")
 
 def send_feedback_email(feedback: str, user_email: str, user_name: str = None) -> bool:
     """

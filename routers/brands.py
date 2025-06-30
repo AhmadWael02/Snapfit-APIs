@@ -1,6 +1,11 @@
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, File, Form, UploadFile
 from sqlalchemy.orm import Session
 from typing import List
+import traceback
+import os
+from clip_utils import get_clip_embedding
+from rembg import remove
+from utils import save_upload_file
 
 import models, schemas
 from database import get_db
@@ -68,4 +73,93 @@ def get_brand_item_statistics(db: Session = Depends(get_db), current_user: model
             visit_store=visit_store,
             recommended=recommended
         ))
-    return stats 
+    return stats
+
+@router.post("/add-item", status_code=201)
+async def add_brand_item(
+    apparel_type: str = Form(...),
+    subtype: str = Form(...),
+    color: str = Form(...),
+    size: str = Form(...),
+    occasion: str = Form(""),
+    gender: str = Form(...),  # Brand owner chooses the gender
+    season: str = Form(None),
+    price: float = Form(None),
+    purchase_link: str = Form(None),
+    image: UploadFile = File(...),
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user)
+):
+    try:
+        # Verify user is a brand
+        brand = db.query(models.Brand).filter(models.Brand.brand_id == current_user.id).first()
+        if not brand:
+            raise HTTPException(status_code=403, detail="Only brand users can add items")
+        
+        # Save the image and get the relative path
+        relative_path = save_upload_file(image, "images/clothes", f"user_{current_user.id}")
+        abs_image_path = os.path.abspath(os.path.join("static", relative_path))
+        image_id = os.path.splitext(os.path.basename(abs_image_path))[0]
+        
+        # --- Remove background removal for brand uploads ---
+        # Use the original image path for embedding and storage
+        # --- Auto-fill season if not provided ---
+        _sub = subtype.strip().lower()
+        if not season or season.strip() == "":
+            if _sub in ["tshirt", "top", "skirt", "short", "sandal"]:
+                season = "Summer"
+            elif _sub in ["sweaters", "casual jacket"]:
+                season = "Winter"
+            else:
+                season = "All Year Long"
+        
+        # --- Compute CLIP embedding for original image ---
+        embedding = get_clip_embedding(abs_image_path)
+        
+        # --- Store embedding based on brand owner's choice ---
+        gender_lower = gender.lower()
+        male_embedding = None
+        female_embedding = None
+        
+        if gender_lower == "male":
+            male_embedding = embedding
+        elif gender_lower == "female":
+            female_embedding = embedding
+        elif gender_lower == "unisex":
+            # For unisex items, store in both fields
+            male_embedding = embedding
+            female_embedding = embedding
+        
+        # Save the item with the original image path and embedding
+        new_item = models.Clothes(
+            owner_id=current_user.id,
+            apparel_type=apparel_type,
+            subtype=subtype,
+            color=color,
+            size=size,
+            occasion=occasion,
+            gender=gender,
+            path=relative_path,
+            purchase_link=purchase_link,
+            price=price,
+            season=season,
+            male_embedding=male_embedding,
+            female_embedding=female_embedding
+        )
+        db.add(new_item)
+        db.commit()
+        db.refresh(new_item)
+        
+        # Build the full URL for the returned path (ensure forward slashes)
+        backend_url = os.getenv('BACKEND_URL', 'http://10.0.2.2:8000')
+        rel_path = relative_path.replace('\\', '/')
+        full_url = f"{backend_url}/static/{rel_path}"
+        
+        return {
+            "id": new_item.id,
+            "path": full_url,
+            "message": "Item added successfully"
+        }
+    except Exception as e:
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail="Unable to add brand item") 

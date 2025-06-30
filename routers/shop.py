@@ -58,4 +58,26 @@ def get_items_by_brand(brand_id: int, db: Session = Depends(get_db)):
         .filter(models.Clothes.owner_id == brand_id)
         .all()
     )
-    return [_serialize(item, user_name) for item, user_name in rows] 
+    return [_serialize(item, user_name) for item, user_name in rows]
+
+@router.get("/items/{item_id}")
+def get_shop_item_by_id(item_id: int, db: Session = Depends(get_db)):
+    try:
+        # Only include items where owner_id is a brand_id in the brand table
+        brand_ids = db.query(models.Brand.brand_id).subquery()
+        row = (
+            db.query(models.Clothes, models.User.user_name)
+            .join(models.User, models.Clothes.owner_id == models.User.id)
+            .filter(models.Clothes.id == item_id)
+            .filter(models.Clothes.owner_id.in_(brand_ids))
+            .first()
+        )
+        if not row:
+            raise HTTPException(status_code=404, detail="Shop item not found")
+        item, user_name = row
+        return _serialize(item, user_name)
+    except HTTPException as e:
+        raise e
+    except Exception as e:
+        traceback.print_exc()
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Unable to fetch item") 

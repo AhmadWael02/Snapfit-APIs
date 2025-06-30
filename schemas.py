@@ -4,13 +4,16 @@ import uvicorn
 from fastapi import FastAPI
 from datetime import datetime
 
+
 class PostBase(BaseModel):
     title: str
     body: str
     age: Optional[int] = None
 
+
 class PostCreate(PostBase):
     pass
+
 
 class ConsumerCreate(BaseModel):
     email: EmailStr
@@ -19,11 +22,13 @@ class ConsumerCreate(BaseModel):
     size: Optional[str] = None
     gender: Optional[str] = None
 
+
 class BrandCreate(BaseModel):
     email: EmailStr
     password: str
     username: str
     description: Optional[str] = None
+
 
 class UserOut(BaseModel):
     id: int
@@ -33,14 +38,16 @@ class UserOut(BaseModel):
     class Config:
         from_attributes = True  # Updated from orm_mode=True for Pydantic v2
 
+
 class UserLogin(BaseModel):
     email: EmailStr
     password: str
-    
+
 
 class Token(BaseModel):
     access_token: str
     token_type: str
+
 
 class TokenData(BaseModel):
     email: Optional[str] = None
@@ -51,7 +58,7 @@ class Post(BaseModel):
     body: str
     user_id: int
     owner: UserOut
-    
+
     class Config:
         from_attributes = True  # Updated from orm_mode=True for Pydantic v2
 
@@ -70,22 +77,26 @@ class UserInfo(BaseModel):
 class ClassifierResponse(BaseModel):
     subtype: str
 
+
 class UserLikeCreate(BaseModel):
     item_id: int
+
 
 class UserLikeResponse(BaseModel):
     id: int
     user_id: int
     item_id: int
-    
+
     class Config:
         from_attributes = True  # Updated from orm_mode=True for Pydantic v2
 
+
 class UserLikesResponse(BaseModel):
     likes: List[UserLikeResponse]
-    
+
     class Config:
         from_attributes = True  # Updated from orm_mode=True for Pydantic v2
+
 
 class Clothes(BaseModel):
     id: int
@@ -99,9 +110,14 @@ class Clothes(BaseModel):
     path: Optional[str] = None
     purchase_link: Optional[str] = None
     price: Optional[float] = None
+    season: Optional[str] = None
+    male_embedding: Optional[str] = None
+    female_embedding: Optional[str] = None
+    path_3d: Optional[str] = None
 
     class Config:
         from_attributes = True
+
 
 class OutfitBase(BaseModel):
     top_id: int
@@ -110,8 +126,10 @@ class OutfitBase(BaseModel):
     name: Optional[str] = None
     tags: List[str] = []
 
+
 class OutfitCreate(OutfitBase):
     pass
+
 
 class OutfitResponse(OutfitBase):
     id: int
@@ -121,9 +139,10 @@ class OutfitResponse(OutfitBase):
     top: Clothes
     bottom: Clothes
     shoes: Clothes
-    
+
     class Config:
         from_attributes = True
+
 
 class UserPreferencesBase(BaseModel):
     fit_preference: str = "Regular"
@@ -133,6 +152,7 @@ class UserPreferencesBase(BaseModel):
     preferred_colors: List[str] = []
     excluded_categories: List[str] = []
 
+
 class UserPreferencesUpdate(UserPreferencesBase):
     fit_preference: Optional[str] = None
     lifestyle_preferences: Optional[List[str]] = None
@@ -141,11 +161,13 @@ class UserPreferencesUpdate(UserPreferencesBase):
     preferred_colors: Optional[List[str]] = None
     excluded_categories: Optional[List[str]] = None
 
+
 class UserPreferencesResponse(UserPreferencesBase):
     user_id: int
 
     class Config:
         orm_mode = True
+
 
 class UserFavoritesResponse(BaseModel):
     id: int
@@ -157,10 +179,12 @@ class UserFavoritesResponse(BaseModel):
     class Config:
         from_attributes = True  # Updated from orm_mode=True for Pydantic v2
 
+
 class ItemEventCreate(BaseModel):
     item_id: int
     user_id: int
     event_type: str  # 'item_click', 'visit_store', 'recommendation'
+
 
 class ItemEventStats(BaseModel):
     item_id: int
@@ -170,11 +194,14 @@ class ItemEventStats(BaseModel):
     visit_store: int
     recommended: int
 
+
 app = FastAPI()
+
 
 @app.get("/")
 def root():
     return {"message": "API is running"}
+
 
 if __name__ == "__main__":
     uvicorn.run("predictor:app", host="0.0.0.0", port=8000, reload=True)

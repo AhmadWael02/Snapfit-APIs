@@ -14,6 +14,7 @@ router = APIRouter(
 @router.get("/", response_model=List[schemas.OutfitResponse])
 def get_user_outfits(db: Session = Depends(get_db), current_user = Depends(get_current_user)):
     outfits = db.query(models.Outfit).filter(models.Outfit.user_id == current_user.id).all()
+    print(f"DEBUG: get_user_outfits for user_id={current_user.id}, found {len(outfits)} outfits: {[o.id for o in outfits]}")
     return outfits
 
 @router.post("/", status_code=status.HTTP_201_CREATED, response_model=schemas.OutfitResponse)
