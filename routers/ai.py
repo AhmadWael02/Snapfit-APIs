@@ -613,6 +613,99 @@ async def recommend_outfit(
     print('AI Stylist Recommendations:', recommendations)
     return {'recommendations': recommendations, 'predicted_category': main_category}
 
+@router.post("/recommend-outfit-by-item-id")
+async def recommend_outfit_by_item_id(
+    item_id: int = Body(...),
+    user_id: int = Body(...),
+    db: Session = Depends(get_db),
+    request: Request = None
+):
+    # 1. Fetch the item from the database
+    item = db.query(db_models.Clothes).filter(db_models.Clothes.id == item_id).first()
+    if not item:
+        raise HTTPException(status_code=404, detail="Item not found")
+    # 2. Get user gender
+    consumer = db.query(db_models.Consumer).filter(db_models.Consumer.consumer_id == user_id).first()
+    gender = consumer.gender.lower() if consumer and consumer.gender else 'male'
+    # 3. Get the correct embedding
+    item_emb_str = item.male_embedding if gender == 'male' else item.female_embedding
+    if not item_emb_str:
+        raise HTTPException(status_code=400, detail="No embedding for this item and gender")
+    try:
+        arr = eval(item_emb_str)
+        if isinstance(arr, set):
+            arr = list(arr)
+        embedding = np.array(arr).reshape(1, -1)
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Embedding parse error: {e}")
+    # 4. Classify the item (use its apparel_type/subtype to determine recommendation logic)
+    main_category = item.apparel_type if hasattr(item, 'apparel_type') else 'Unknown'
+    if main_category.lower() in ['top', 'topwear', 'shirt', 'tshirt', 'blouse', 'jacket', 'sweater']:
+        recommend_cats = ['bottom', 'shoes']
+    elif main_category.lower() in ['bottom', 'bottomwear', 'pant', 'jean', 'trouser', 'skirt', 'short']:
+        recommend_cats = ['top', 'shoes']
+    elif main_category.lower() in ['shoes', 'shoe', 'sneaker', 'boot', 'sandal', 'loafer', 'flat', 'heel']:
+        recommend_cats = ['top', 'bottom']
+    else:
+        recommend_cats = ['top', 'bottom', 'shoes']
+    # 5. Get shop and closet items
+    shop_items = db.query(db_models.Clothes).join(db_models.Brand, db_models.Clothes.owner_id == db_models.Brand.brand_id).all()
+    closet_items = db.query(db_models.Clothes).filter(db_models.Clothes.owner_id == user_id).all()
+    # 6. Prepare candidates (same as /recommend-outfit)
+    candidates = []
+    for citem in shop_items + closet_items:
+        citem_emb_str = citem.male_embedding if gender == 'male' else citem.female_embedding
+        if citem_emb_str is None:
+            continue
+        try:
+            arr = eval(citem_emb_str)
+            if isinstance(arr, set):
+                arr = list(arr)
+            citem_emb = np.array(arr).reshape(1, -1)
+        except Exception as e:
+            continue
+        meta_score = metadata_compatibility(
+            {'color': item.color, 'occasion': item.occasion, 'season': item.season},
+            {'color': citem.color, 'occasion': citem.occasion, 'season': citem.season}
+        )
+        visual_sim = cosine_similarity(embedding, citem_emb)[0][0]
+        final_score = 0.7 * visual_sim + 0.3 * meta_score
+        image_url = citem.path
+        if request:
+            base_url = str(request.base_url).rstrip('/')
+            image_url = f"{base_url}/static/{image_url.lstrip('/')}"
+        else:
+            if not image_url.startswith('http'):
+                image_url = f"http://localhost:8000/static/{image_url.lstrip('/')}"
+        candidates.append({
+            'id': citem.id,
+            'path': image_url,
+            'category': citem.apparel_type,
+            'subcategory': getattr(citem, 'subtype', ''),
+            'name': getattr(citem, 'name', getattr(citem, 'subtype', '')),
+            'price': citem.price,
+            'brand': getattr(citem, 'brand', None),
+            'color': citem.color,
+            'size': citem.size,
+            'occasion': citem.occasion,
+            'gender': citem.gender,
+            'score': final_score,
+            'source': 'shop' if citem in shop_items else 'closet',
+        })
+    # 7. Recommend top items for each category
+    recommendations = {}
+    for cat in recommend_cats:
+        cat_items = [c for c in candidates if map_apparel_type(c['category'], c.get('subcategory', None)) == cat]
+        closet_items = [c for c in cat_items if c['source'] == 'closet']
+        shop_items = [c for c in cat_items if c['source'] == 'shop']
+        best_closet = max(closet_items, key=lambda x: x['score']) if closet_items else None
+        best_shop = max(shop_items, key=lambda x: x['score']) if shop_items else None
+        recommendations[cat] = {
+            'closet': best_closet,
+            'shop': best_shop
+        }
+    return {'recommendations': recommendations, 'predicted_category': main_category}
+
 # --- Save Outfit Endpoint ---
 @router.post("/save-outfit")
 async def save_outfit(

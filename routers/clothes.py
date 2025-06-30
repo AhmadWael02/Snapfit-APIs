@@ -131,6 +131,17 @@ def update_clothes(item_id: int, updated: schemas.Clothes, db: Session = Depends
 @router.delete("/{item_id}", status_code=status.HTTP_204_NO_CONTENT)
 def delete_clothes(item_id: int, db: Session = Depends(get_db),
                    current_user: models.User = Depends(oauth.get_current_user)):
+    # Check if the item is referenced in any outfit
+    outfit_ref = db.query(models.Outfit).filter(
+        (models.Outfit.top_id == item_id) |
+        (models.Outfit.bottom_id == item_id) |
+        (models.Outfit.shoes_id == item_id)
+    ).first()
+    if outfit_ref:
+        raise HTTPException(
+            status_code=400,
+            detail="This item is part of one or more outfits and cannot be deleted. Please remove it from all outfits before deleting."
+        )
     deleted = db.query(models.Clothes).filter(models.Clothes.id == item_id,
                                               models.Clothes.owner_id == current_user.id).delete(
         synchronize_session=False)

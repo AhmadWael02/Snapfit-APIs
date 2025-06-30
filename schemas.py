@@ -131,6 +131,11 @@ class OutfitCreate(OutfitBase):
     pass
 
 
+class OutfitUpdate(BaseModel):
+    name: Optional[str] = None
+    tags: Optional[List[str]] = None
+
+
 class OutfitResponse(OutfitBase):
     id: int
     user_id: int

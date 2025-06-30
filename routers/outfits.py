@@ -73,6 +73,28 @@ def toggle_outfit_favorite(outfit_id: int, db: Session = Depends(get_db), curren
     
     return outfit
 
+@router.put("/{outfit_id}", response_model=schemas.OutfitResponse)
+def update_outfit(outfit_id: int, outfit_update: schemas.OutfitUpdate, db: Session = Depends(get_db), current_user = Depends(get_current_user)):
+    outfit = db.query(models.Outfit).filter(
+        models.Outfit.id == outfit_id,
+        models.Outfit.user_id == current_user.id
+    ).first()
+    
+    if not outfit:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, 
+                           detail=f"Outfit with id {outfit_id} not found")
+    
+    # Update fields if provided
+    if outfit_update.name is not None:
+        outfit.name = outfit_update.name
+    if outfit_update.tags is not None:
+        outfit.tags = outfit_update.tags
+    
+    db.commit()
+    db.refresh(outfit)
+    
+    return outfit
+
 @router.delete("/{outfit_id}", status_code=status.HTTP_204_NO_CONTENT)
 def delete_outfit(outfit_id: int, db: Session = Depends(get_db), current_user = Depends(get_current_user)):
     outfit_query = db.query(models.Outfit).filter(
