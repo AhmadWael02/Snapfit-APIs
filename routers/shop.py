@@ -22,6 +22,7 @@ def _serialize(item: models.Clothes, user_name: str):
         "purchase_link": item.purchase_link,
         "price": item.price,
         "user_name": user_name,
+        "path_3d": item.path_3d,
     }
 
 @router.get("/items")

@@ -117,6 +117,7 @@ class Outfit(Base):
     top_id = Column(Integer, ForeignKey('clothes.id'), nullable=False)
     bottom_id = Column(Integer, ForeignKey('clothes.id'), nullable=False)
     shoes_id = Column(Integer, ForeignKey('clothes.id'), nullable=False)
+    bags = Column(Integer, ForeignKey('clothes.id'), nullable=True)
     name = Column(String, nullable=True)
     tags = Column(JSON, nullable=False, default=list)
     is_favorite = Column(Boolean, nullable=False, default=False)

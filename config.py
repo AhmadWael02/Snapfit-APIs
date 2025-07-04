@@ -30,6 +30,7 @@ class Settings(BaseSettings):
     algorithm: str
     access_token_expire_minutes: int
     hf_api_key: str
+    serpapi_key: str
     class Config:
         env_file = ".env"
 

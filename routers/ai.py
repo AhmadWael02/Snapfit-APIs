@@ -500,6 +500,10 @@ def map_apparel_type(apparel_type, subtype=None):
     ]
     if lower in shoe_types or sub in shoe_types:
         return 'shoes'
+    # Bags
+    bag_types = ['bag', 'bags', 'handbag', 'handbags', 'clutch', 'clutches', 'tote', 'totes', 'backpack', 'backpacks', 'purse', 'purses']
+    if lower in bag_types or sub in bag_types:
+        return 'bag'
     return lower
 
 
@@ -641,13 +645,13 @@ async def recommend_outfit_by_item_id(
     # 4. Classify the item (use its apparel_type/subtype to determine recommendation logic)
     main_category = item.apparel_type if hasattr(item, 'apparel_type') else 'Unknown'
     if main_category.lower() in ['top', 'topwear', 'shirt', 'tshirt', 'blouse', 'jacket', 'sweater']:
-        recommend_cats = ['bottom', 'shoes']
+        recommend_cats = ['bottom', 'shoes', 'bag']
     elif main_category.lower() in ['bottom', 'bottomwear', 'pant', 'jean', 'trouser', 'skirt', 'short']:
-        recommend_cats = ['top', 'shoes']
+        recommend_cats = ['top', 'shoes', 'bag']
     elif main_category.lower() in ['shoes', 'shoe', 'sneaker', 'boot', 'sandal', 'loafer', 'flat', 'heel']:
-        recommend_cats = ['top', 'bottom']
+        recommend_cats = ['top', 'bottom', 'bag']
     else:
-        recommend_cats = ['top', 'bottom', 'shoes']
+        recommend_cats = ['top', 'bottom', 'shoes', 'bag']
     # 5. Get shop and closet items
     shop_items = db.query(db_models.Clothes).join(db_models.Brand, db_models.Clothes.owner_id == db_models.Brand.brand_id).all()
     closet_items = db.query(db_models.Clothes).filter(db_models.Clothes.owner_id == user_id).all()
@@ -733,4 +737,93 @@ async def save_outfit(
     db.add(outfit)
     db.commit()
     db.refresh(outfit)
-    return {"message": "Outfit saved successfully", "outfit_id": outfit.id} 
+    return {"message": "Outfit saved successfully", "outfit_id": outfit.id}
+
+@router.post("/generate-female-outfit-by-item-id")
+async def generate_female_outfit_by_item_id(
+    item_id: int = Body(...),
+    user_id: int = Body(...),
+    db: Session = Depends(get_db),
+    request: Request = None
+):
+    # 1. Fetch the item from the database
+    item = db.query(db_models.Clothes).filter(db_models.Clothes.id == item_id).first()
+    if not item:
+        raise HTTPException(status_code=404, detail="Item not found")
+    # 2. Get user gender
+    consumer = db.query(db_models.Consumer).filter(db_models.Consumer.consumer_id == user_id).first()
+    gender = consumer.gender.lower() if consumer and consumer.gender else 'female'
+    if gender != 'female':
+        raise HTTPException(status_code=400, detail="This endpoint is for female outfit generation only")
+    # 3. Get the correct embedding
+    item_emb_str = item.female_embedding
+    if not item_emb_str:
+        raise HTTPException(status_code=400, detail="No female embedding for this item")
+    try:
+        arr = eval(item_emb_str)
+        if isinstance(arr, set):
+            arr = list(arr)
+        seed_embedding = np.array(arr).reshape(1, -1)
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Embedding parse error: {e}")
+    # 4. Load all items with female_embedding
+    all_items = db.query(db_models.Clothes).filter(db_models.Clothes.female_embedding != None).all()
+    candidate_features = {}
+    for citem in all_items:
+        try:
+            arr = eval(citem.female_embedding)
+            if isinstance(arr, set):
+                arr = list(arr)
+            image_feat = np.array(arr)
+            # Generate image_rnn_feat as in notebook
+            rnn_feat = image_feat + np.random.normal(0, 0.05, image_feat.shape)
+            rnn_feat = rnn_feat / (np.linalg.norm(rnn_feat) + 1e-8)
+            candidate_features[citem.id] = {
+                'image_feat': image_feat,
+                'image_rnn_feat': rnn_feat,
+                'category': citem.apparel_type,
+                'path': citem.path
+            }
+        except Exception:
+            continue
+    candidate_ids = list(candidate_features.keys())
+    # 5. Build and restore the LSTM model
+    import tensorflow as tf
+    config = build_inference_model()  # You need to import this from your notebook logic
+    sess = tf.compat.v1.Session()
+    saver = tf.compat.v1.train.Saver()
+    saver.restore(sess, 'D:\snapfit_v1\snapfit_v1\assets\models\model.ckpt-34865')
+    # 6. Generate outfit
+    seed_features = candidate_features[item.id]['image_rnn_feat']
+    backward_items, forward_items = generate_outfit_with_vse(
+        sess, seed_features, candidate_features, candidate_ids, config.num_lstm_units
+    )
+    balanced_outfit = enforce_outfit_rules(item.id, backward_items, forward_items, candidate_features)
+    # 7. Parse result for response (top, bottom, shoes, bag)
+    def find_by_cat(cat):
+        for iid in balanced_outfit:
+            if candidate_features[iid]['category'].lower() == cat:
+                return iid
+        return None
+    top_id = find_by_cat('top')
+    bottom_id = find_by_cat('bottom')
+    shoes_id = find_by_cat('shoes')
+    bag_id = find_by_cat('bag')
+    # 8. Build response
+    def build_item(iid):
+        if iid is None:
+            return None
+        f = candidate_features[iid]
+        return {
+            'id': iid,
+            'category': f['category'],
+            'image_path': f['path']
+        }
+    return {
+        'outfit': {
+            'top': build_item(top_id),
+            'bottom': build_item(bottom_id),
+            'shoes': build_item(shoes_id),
+            'bag': build_item(bag_id)
+        }
+    }

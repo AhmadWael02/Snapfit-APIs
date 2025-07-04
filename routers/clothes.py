@@ -9,12 +9,15 @@ import sys
 from rembg import remove
 from PIL import Image
 import io
+import json
+import numpy as np
 
 import models, schemas
 from database import get_db
 import oauth
 from utils import save_upload_file
 from clip_utils import get_clip_embedding
+from inception_utils import get_inception_embedding, get_vse_embedding
 
 router = APIRouter(prefix="/clothes", tags=["clothes"])
 
@@ -86,9 +89,10 @@ async def create_clothes(
         male_embedding = None
         female_embedding = None
         if gender_db == "male":
-            male_embedding = embedding
+            male_embedding = json.dumps(get_clip_embedding(abs_masked_path))
         elif gender_db == "female":
-            female_embedding = embedding
+            female_embedding = json.dumps(get_vse_embedding(abs_masked_path))
+            male_embedding = json.dumps(get_clip_embedding(abs_masked_path))
         # Save the item with the masked image path and embedding
         new_item = models.Clothes(
             owner_id=current_user.id,
@@ -252,4 +256,32 @@ async def upload_clothes_image(image: UploadFile = File(...), db: Session = Depe
         }
     except Exception as e:
         traceback.print_exc()
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Upload failed") 
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Upload failed")
+
+
+@router.get("/similar-items/{item_id}", response_model=List[schemas.Clothes])
+def get_similar_items(item_id: int, db: Session = Depends(get_db), top_k: int = 5):
+    # 1. Get the query item and its male_embedding
+    item = db.query(models.Clothes).filter(models.Clothes.id == item_id).first()
+    if not item or not item.male_embedding:
+        raise HTTPException(status_code=404, detail="Item or embedding not found")
+    try:
+        query_emb = np.array(eval(item.male_embedding), dtype=np.float32)
+    except Exception:
+        raise HTTPException(status_code=500, detail="Invalid embedding format")
+    # 2. Get all other items with male_embedding
+    all_items = db.query(models.Clothes).filter(models.Clothes.id != item_id, models.Clothes.male_embedding != None).all()
+    similarities = []
+    for other in all_items:
+        try:
+            other_emb = np.array(eval(other.male_embedding), dtype=np.float32)
+            # Cosine similarity
+            sim = float(np.dot(query_emb, other_emb) / (np.linalg.norm(query_emb) * np.linalg.norm(other_emb) + 1e-8))
+            similarities.append((sim, other))
+        except Exception:
+            continue
+    # 3. Sort by similarity (descending)
+    similarities.sort(reverse=True, key=lambda x: x[0])
+    # 4. Return top_k items
+    top_items = [x[1] for x in similarities[:top_k]]
+    return top_items
