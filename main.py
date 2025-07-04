@@ -32,6 +32,7 @@ from routers.user import router as user_router
 from config import settings
 from datetime import datetime
 from typing import Optional
+import re
 
 class ChatRequest(BaseModel):
     query: str
@@ -188,11 +189,19 @@ def is_fashion_question(text):
     text_lower = text.lower()
     return any(word in text_lower for word in FASHION_KEYWORDS)
 
-def truncate_text(text, max_tokens=MAX_TOKENS):
+def smart_truncate(text, max_words=120):
     words = text.split()
-    if len(words) > max_tokens:
-        return ' '.join(words[:max_tokens]) + '...'
-    return text
+    if len(words) <= max_words:
+        return text
+    # Find the index of the max_words-th word
+    truncated = ' '.join(words[:max_words])
+    # Find the last sentence-ending punctuation after max_words
+    match = re.search(r'([.!?])[^.!?]*$', truncated)
+    if match:
+        end = match.end()
+        return truncated[:end] + ' …'
+    # If no punctuation, just return the truncated text with ellipsis
+    return truncated + ' …'
 
 @app.post("/chat")
 async def chat(request: ChatRequest):
@@ -246,7 +255,8 @@ async def chat(request: ChatRequest):
         print("[CHAT ENDPOINT DEBUG] SerpAPI failed, falling back to Hugging Face API.")
         prompt = build_llama3_prompt(system_message, history[:-1], user_query)
         answer = hf_chat(prompt)
-    answer = truncate_text(answer)
+    # Replace old truncation with smart truncation
+    answer = smart_truncate(answer)
     chat_memory[user_id].append({"role": "assistant", "content": answer})
     if len(chat_memory[user_id]) > MEMORY_WINDOW_SIZE:
         chat_memory[user_id] = chat_memory[user_id][-MEMORY_WINDOW_SIZE:]

@@ -279,3 +279,8 @@ def submit_feedback(payload: FeedbackPayload, current_user: models.User = Depend
         # Still return success to user, but log the email failure
         print("Warning: Feedback received but email notification failed to send")
         return {"message": "Thank you for your feedback!"}
+
+@router.get("/check-username/{username}")
+def check_username(username: str, db: Session = Depends(get_db)):
+    existing_user = db.query(models.User).filter(models.User.user_name == username).first()
+    return {"exists": existing_user is not None}
