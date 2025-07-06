@@ -198,6 +198,7 @@ class ItemEventStats(BaseModel):
     users_clicked: int
     visit_store: int
     recommended: int
+    liked_recommendation: int
 
 
 app = FastAPI()

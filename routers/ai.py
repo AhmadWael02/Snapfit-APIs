@@ -737,6 +737,49 @@ async def save_outfit(
     db.add(outfit)
     db.commit()
     db.refresh(outfit)
+    
+    # Track brand recommendations if the outfit contains brand items
+    try:
+        # Get all brand items in this outfit
+        brand_items = []
+        
+        # Check top
+        top_item = db.query(db_models.Clothes).filter(db_models.Clothes.id == outfit.top_id).first()
+        if top_item and db.query(db_models.Brand).filter(db_models.Brand.brand_id == top_item.owner_id).first():
+            brand_items.append(top_item)
+        
+        # Check bottom
+        bottom_item = db.query(db_models.Clothes).filter(db_models.Clothes.id == outfit.bottom_id).first()
+        if bottom_item and db.query(db_models.Brand).filter(db_models.Brand.brand_id == bottom_item.owner_id).first():
+            brand_items.append(bottom_item)
+        
+        # Check shoes
+        shoes_item = db.query(db_models.Clothes).filter(db_models.Clothes.id == outfit.shoes_id).first()
+        if shoes_item and db.query(db_models.Brand).filter(db_models.Brand.brand_id == shoes_item.owner_id).first():
+            brand_items.append(shoes_item)
+        
+        # Log recommendation events for each brand item in the outfit
+        for item in brand_items:
+            # Check if this event already exists to avoid duplicates
+            existing_event = db.query(db_models.ItemEvent).filter(
+                db_models.ItemEvent.item_id == item.id,
+                db_models.ItemEvent.user_id == user_id,
+                db_models.ItemEvent.event_type == 'recommendation'
+            ).first()
+            
+            if not existing_event:
+                db_event = db_models.ItemEvent(
+                    item_id=item.id,
+                    user_id=user_id,
+                    event_type='recommendation'
+                )
+                db.add(db_event)
+        
+        db.commit()
+    except Exception as e:
+        # Don't fail the main operation if brand tracking fails
+        print(f"Warning: Failed to log brand tracking for AI outfit: {e}")
+    
     return {"message": "Outfit saved successfully", "outfit_id": outfit.id}
 
 @router.post("/generate-female-outfit-by-item-id")

@@ -58,6 +58,71 @@ def log_item_event(event: schemas.ItemEventCreate, db: Session = Depends(get_db)
     return {"status": "success"}
 
 
+@router.post("/outfit_favorite_event", status_code=201)
+def log_outfit_favorite_event(outfit_id: int, db: Session = Depends(get_db), current_user: models.User = Depends(get_current_user)):
+    """
+    Log when a user favorites an outfit that contains brand items.
+    This will help track which brand items are being liked through outfit recommendations.
+    """
+    try:
+        # Get the outfit
+        outfit = db.query(models.Outfit).filter(
+            models.Outfit.id == outfit_id,
+            models.Outfit.user_id == current_user.id
+        ).first()
+        
+        if not outfit:
+            raise HTTPException(status_code=404, detail="Outfit not found")
+        
+        # Get all brand items in this outfit
+        brand_items = []
+        
+        # Check top
+        top_item = db.query(models.Clothes).filter(models.Clothes.id == outfit.top_id).first()
+        if top_item and db.query(models.Brand).filter(models.Brand.brand_id == top_item.owner_id).first():
+            brand_items.append(top_item)
+        
+        # Check bottom
+        bottom_item = db.query(models.Clothes).filter(models.Clothes.id == outfit.bottom_id).first()
+        if bottom_item and db.query(models.Brand).filter(models.Brand.brand_id == bottom_item.owner_id).first():
+            brand_items.append(bottom_item)
+        
+        # Check shoes
+        shoes_item = db.query(models.Clothes).filter(models.Clothes.id == outfit.shoes_id).first()
+        if shoes_item and db.query(models.Brand).filter(models.Brand.brand_id == shoes_item.owner_id).first():
+            brand_items.append(shoes_item)
+        
+        # Check bags (if any)
+        if outfit.bags:
+            bags_item = db.query(models.Clothes).filter(models.Clothes.id == outfit.bags).first()
+            if bags_item and db.query(models.Brand).filter(models.Brand.brand_id == bags_item.owner_id).first():
+                brand_items.append(bags_item)
+        
+        # Log recommendation events for each brand item in the outfit
+        for item in brand_items:
+            # Check if this event already exists to avoid duplicates
+            existing_event = db.query(models.ItemEvent).filter(
+                models.ItemEvent.item_id == item.id,
+                models.ItemEvent.user_id == current_user.id,
+                models.ItemEvent.event_type == 'recommendation'
+            ).first()
+            
+            if not existing_event:
+                db_event = models.ItemEvent(
+                    item_id=item.id,
+                    user_id=current_user.id,
+                    event_type='recommendation'
+                )
+                db.add(db_event)
+        
+        db.commit()
+        return {"status": "success", "brand_items_count": len(brand_items)}
+        
+    except Exception as e:
+        print(f"Error logging outfit favorite event: {e}")
+        raise HTTPException(status_code=500, detail="Error logging outfit favorite event")
+
+
 @router.get("/items/statistics", response_model=List[schemas.ItemEventStats])
 def get_brand_item_statistics(db: Session = Depends(get_db), current_user: models.User = Depends(get_current_user)):
     # Only allow brand users
@@ -74,13 +139,24 @@ def get_brand_item_statistics(db: Session = Depends(get_db), current_user: model
                                                                 models.ItemEvent.event_type == 'visit_store').distinct().count()
         recommended = db.query(models.ItemEvent).filter(models.ItemEvent.item_id == item.id,
                                                         models.ItemEvent.event_type == 'recommendation').count()
+        
+        # Calculate liked_recommendation: count outfits that contain this item and are favorited
+        # Note: Bags are excluded due to database type mismatch (bags column is varchar instead of integer)
+        liked_recommendation = db.query(models.Outfit).filter(
+            models.Outfit.is_favorite == True,
+            (models.Outfit.top_id == item.id) | 
+            (models.Outfit.bottom_id == item.id) | 
+            (models.Outfit.shoes_id == item.id)
+        ).count()
+        
         stats.append(schemas.ItemEventStats(
             item_id=item.id,
             item_name=item.subtype or item.apparel_type,
             item_photo_url=item.path,
             users_clicked=users_clicked,
             visit_store=visit_store,
-            recommended=recommended
+            recommended=recommended,
+            liked_recommendation=liked_recommendation
         ))
     return stats
 
