@@ -694,6 +694,8 @@ async def recommend_outfit_by_item_id(
             'occasion': citem.occasion,
             'gender': citem.gender,
             'score': final_score,
+            'visual_similarity': visual_sim,
+            'metadata_score': meta_score,
             'source': 'shop' if citem in shop_items else 'closet',
         })
     # 7. Recommend top items for each category

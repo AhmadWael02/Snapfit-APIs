@@ -7,6 +7,7 @@ import os
 
 # Path to the VSE checkpoint (update as needed)
 VSE_CHECKPOINT_PATH = r"D:\snapfit_v1\snapfit_v1\assets\models\model.ckpt-34865"
+INCEPTION_WEIGHTS_PATH = r"C:\Users\lenovo\Downloads\inception_v3_weights_tf_dim_ordering_tf_kernels_notop.h5"
 
 # Thread-safe singleton pattern for model loading
 _inception_model = None
@@ -19,12 +20,20 @@ def get_inception_model():
     global _inception_model
     with _model_lock:
         if _inception_model is None:
-            _inception_model = InceptionV3(
-                weights='imagenet',
-                include_top=False,
-                pooling='avg',
-                input_shape=(299, 299, 3)
-            )
+            if os.path.exists(INCEPTION_WEIGHTS_PATH):
+                _inception_model = InceptionV3(
+                    weights=INCEPTION_WEIGHTS_PATH,
+                    include_top=False,
+                    pooling='avg',
+                    input_shape=(299, 299, 3)
+                )
+            else:
+                _inception_model = InceptionV3(
+                    weights='imagenet',
+                    include_top=False,
+                    pooling='avg',
+                    input_shape=(299, 299, 3)
+                )
         return _inception_model
 
 def get_vse_weights():

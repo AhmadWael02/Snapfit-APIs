@@ -82,16 +82,14 @@ async def create_clothes(
                 season = "All Year Long"
         # --- Compute CLIP embedding for masked image ---
         abs_masked_path = os.path.abspath(os.path.join("static", masked_relative_path))
-        embedding = get_clip_embedding(abs_masked_path)
-        # --- Determine gender from Consumer table ---
-        consumer = db.query(models.Consumer).filter(models.Consumer.consumer_id == current_user.id).first()
-        gender_db = consumer.gender.lower() if consumer and consumer.gender else "unisex"
         male_embedding = None
         female_embedding = None
-        if gender_db == "male":
+        if gender.lower() == "male":
             male_embedding = json.dumps(get_clip_embedding(abs_masked_path))
-        elif gender_db == "female":
+        elif gender.lower() == "female":
             female_embedding = json.dumps(get_vse_embedding(abs_masked_path))
+            male_embedding = json.dumps(get_clip_embedding(abs_masked_path))
+        else:
             male_embedding = json.dumps(get_clip_embedding(abs_masked_path))
         # Save the item with the masked image path and embedding
         new_item = models.Clothes(
@@ -259,29 +257,51 @@ async def upload_clothes_image(image: UploadFile = File(...), db: Session = Depe
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Upload failed")
 
 
-@router.get("/similar-items/{item_id}", response_model=List[schemas.Clothes])
+@router.get("/masked/{item_id}", response_model=List[schemas.Clothes])
 def get_similar_items(item_id: int, db: Session = Depends(get_db), top_k: int = 5):
     # 1. Get the query item and its male_embedding
     item = db.query(models.Clothes).filter(models.Clothes.id == item_id).first()
     if not item or not item.male_embedding:
         raise HTTPException(status_code=404, detail="Item or embedding not found")
     try:
-        query_emb = np.array(eval(item.male_embedding), dtype=np.float32)
-    except Exception:
+        emb_str = item.male_embedding
+        if emb_str.strip().startswith('{') and emb_str.strip().endswith('}'):
+            emb_str = emb_str.replace('{', '[').replace('}', ']')
+        query_emb = np.array(json.loads(emb_str), dtype=np.float32)
+    except Exception as e:
+        print(f"[ERROR] Failed to load query embedding for item {item_id}: {item.male_embedding}\nException: {e}")
         raise HTTPException(status_code=500, detail="Invalid embedding format")
-    # 2. Get all other items with male_embedding
-    all_items = db.query(models.Clothes).filter(models.Clothes.id != item_id, models.Clothes.male_embedding != None).all()
+    # 2. Get all other items with male_embedding and same owner_id (brand owner)
+    all_items = db.query(models.Clothes).filter(
+        models.Clothes.id != item_id,
+        models.Clothes.male_embedding != None,
+        models.Clothes.owner_id == item.owner_id
+    ).all()
     similarities = []
     for other in all_items:
         try:
-            other_emb = np.array(eval(other.male_embedding), dtype=np.float32)
+            emb_str = other.male_embedding
+            if emb_str.strip().startswith('{') and emb_str.strip().endswith('}'):
+                emb_str = emb_str.replace('{', '[').replace('}', ']')
+            other_emb = np.array(json.loads(emb_str), dtype=np.float32)
             # Cosine similarity
             sim = float(np.dot(query_emb, other_emb) / (np.linalg.norm(query_emb) * np.linalg.norm(other_emb) + 1e-8))
             similarities.append((sim, other))
-        except Exception:
+        except Exception as e:
+            print(f"[ERROR] Failed to load embedding for item {other.id}: {other.male_embedding}\nException: {e}")
             continue
     # 3. Sort by similarity (descending)
     similarities.sort(reverse=True, key=lambda x: x[0])
-    # 4. Return top_k items
-    top_items = [x[1] for x in similarities[:top_k]]
-    return top_items
+    # 4. Build result list with similarity included
+    result = []
+    for sim, item_obj in similarities[:top_k]:
+        if item_obj.id != item_id:
+            item_dict = schemas.Clothes.from_orm(item_obj).dict()
+            item_dict['similarity'] = sim
+            result.append(item_dict)
+    return result
+
+
+@router.get("/similar-items/{item_id}", response_model=List[schemas.Clothes])
+def get_similar_items_alias(item_id: int, db: Session = Depends(get_db), top_k: int = 5):
+    return get_similar_items(item_id, db, top_k)
